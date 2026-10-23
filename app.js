@@ -209,7 +209,7 @@ function confetti(n = 120) {
 }
 const lvTag = lv => `<span class="tag lv${lv}" title="Уровень ${lv}: ${{ A: 'воспроизведение определений', B: 'понимание и сравнение', C: 'практическое применение' }[lv]}">Уровень ${lv}</span>`;
 const topicTag = t => `<span class="tag" style="border-color:${TOP[t].color}">${TOP[t].icon} ${esc(TOP[t].n)}</span>`;
-const isReal = q => /^Тест \d/.test(q.src);
+const isReal = q => /^Тест /.test(q.src);
 const srcTag = q => `<span class="tag ${isReal(q) ? 'y25' : ''}">${isReal(q) ? '📝 ' : ''}${esc(q.src)}</span>`;
 
 // ======================= HUD / THEME =======================
