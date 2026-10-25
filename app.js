@@ -13,7 +13,7 @@ const defState = () => ({
   xp: 0, q: {}, cards: {}, read: {}, ach: {}, days: {}, traps: {},
   best: { combo: 0 },
   stats: { correct: 0, wrong: 0, correctC: 0, cardsKnown: 0, cleared: 0, perfect: 0, chests: 0, broken: 0, placed: 0, kills: 0, nights: 0 },
-  settings: { theme: 'auto', sound: true },
+  settings: { theme: 'auto', sound: true, creeper: true },
   skin: null, game: null
 });
 function load() {
@@ -207,6 +207,311 @@ function confetti(n = 120) {
     if (++f < 150) requestAnimationFrame(tick); else ctx.clearRect(0, 0, c.width, c.height);
   })();
 }
+// ======================= CREEPER =======================
+// При ошибке из-под экрана выскакивает крипер, шипит и взрывает страницу: фон и карточки
+// разлетаются стеклянными осколками, слова падают вниз, затем страница собирается обратно.
+const CREEPER_FACE = ['........', '........', '.XX..XX.', '.XX..XX.', '...XX...', '..XXXX..', '..XXXX..', '..X..X..'];
+const CREEPER_GREENS = ['#4fbf45', '#3fae37', '#5ec451', '#2f9a2a', '#7fd96b', '#1e7a1e', '#b6eea3', '#8fb58a'];
+const creeperFaceSVG = () => `<svg viewBox="0 0 8 8" width="20" height="20" shape-rendering="crispEdges" aria-hidden="true"><rect width="8" height="8" fill="#4fbf45"/><path fill="#7fd96b" d="M0 0h2v1H0zM5 1h2v1H5zM6 5h2v1H6zM0 6h1v1H0z"/><path fill="#2f9a2a" d="M3 0h1v2H3zM7 3h1v1H7zM0 4h1v1H0z"/><path fill="#111" d="${CREEPER_FACE.flatMap((r, y) => [...r].map((c, x) => c === 'X' ? `M${x} ${y}h1v1h-1z` : '')).join('')}"/></svg>`;
+let creeperURL = null;
+function creeperSprite() {
+  if (creeperURL) return creeperURL;
+  const c = document.createElement('canvas'); c.width = 8; c.height = 26;
+  const g = c.getContext('2d'); let seed = 7;
+  const rnd = () => (seed = seed * 16807 % 2147483647) / 2147483647;
+  for (let y = 0; y < 26; y++) for (let x = 0; x < 8; x++) {
+    let f = CREEPER_GREENS[Math.floor(rnd() * rnd() * CREEPER_GREENS.length)];
+    if (y < 8 && CREEPER_FACE[y][x] === 'X') f = y >= 5 && x > 2 && x < 5 ? '#2a2a2a' : '#0b0b0b';
+    g.fillStyle = f; g.fillRect(x, y, 1, 1);
+    const shade = (y === 8 ? .22 : 0) + (y >= 20 ? .16 : 0) + (y === 25 ? .3 : 0) + (y >= 20 && x === 3 ? .22 : 0);
+    if (shade) { g.fillStyle = `rgba(0,0,0,${shade})`; g.fillRect(x, y, 1, 1); }
+  }
+  return creeperURL = c.toDataURL();
+}
+let puffURL = null;
+function puffSprite() {
+  if (puffURL) return puffURL;
+  const c = document.createElement('canvas'); c.width = c.height = 8;
+  const g = c.getContext('2d'), sh = ['#ffffff', '#e6e6e6', '#cfcfcf', '#b5b5b5', '#9a9a9a'];
+  for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
+    const d = Math.hypot(x - 3.5, y - 3.5);
+    if (d > 4.1 || (d > 3.4 && Math.random() < .5)) continue;
+    g.fillStyle = sh[Math.min(4, Math.floor(Math.random() * 2 + d * .7))]; g.fillRect(x, y, 1, 1);
+  }
+  return puffURL = c.toDataURL();
+}
+
+function getAC() {
+  try { AC = AC || new (window.AudioContext || window.webkitAudioContext)(); if (AC.state === 'suspended') AC.resume(); return AC; } catch (e) { return null; }
+}
+function noiseBuf(ac, sec) {
+  const b = ac.createBuffer(1, Math.ceil(ac.sampleRate * sec), ac.sampleRate), d = b.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  return b;
+}
+function hissSnd(dur) {
+  const ac = S.settings.sound && getAC(); if (!ac) return null;
+  try {
+    const t = ac.currentTime, s = ac.createBufferSource(); s.buffer = noiseBuf(ac, dur + .1);
+    const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 2400;
+    const pk = ac.createBiquadFilter(); pk.type = 'peaking'; pk.frequency.setValueAtTime(4200, t); pk.frequency.linearRampToValueAtTime(6200, t + dur); pk.gain.value = 9;
+    const g = ac.createGain(); g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.12, t + .15); g.gain.linearRampToValueAtTime(.22, t + dur - .04); g.gain.exponentialRampToValueAtTime(.0001, t + dur + .04);
+    s.connect(hp).connect(pk).connect(g).connect(ac.destination); s.start(t); s.stop(t + dur + .1);
+    return s;
+  } catch (e) { return null; }
+}
+function boomSnd() {
+  const ac = S.settings.sound && getAC(); if (!ac) return;
+  try {
+    const t = ac.currentTime, out = ac.createDynamicsCompressor(); out.connect(ac.destination);
+    // раскат: шум через опускающийся фильтр
+    const s = ac.createBufferSource(); s.buffer = noiseBuf(ac, 1.8);
+    const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.setValueAtTime(3200, t); lp.frequency.exponentialRampToValueAtTime(90, t + 1.4);
+    const g = ac.createGain(); g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(1, t + .008); g.gain.exponentialRampToValueAtTime(.0001, t + 1.7);
+    s.connect(lp).connect(g).connect(out); s.start(t); s.stop(t + 1.8);
+    // удар в грудь
+    const o = ac.createOscillator(), og = ac.createGain(); o.type = 'sine';
+    o.frequency.setValueAtTime(120, t); o.frequency.exponentialRampToValueAtTime(32, t + .5);
+    og.gain.setValueAtTime(.9, t); og.gain.exponentialRampToValueAtTime(.0001, t + .6);
+    o.connect(og).connect(out); o.start(t); o.stop(t + .62);
+    // звон падающих осколков
+    for (let i = 0; i < 9; i++) {
+      const at = t + .25 + Math.random() * 1.1, p = ac.createOscillator(), pg = ac.createGain();
+      p.type = 'triangle'; p.frequency.value = 2200 + Math.random() * 3200;
+      pg.gain.setValueAtTime(.0001, at); pg.gain.exponentialRampToValueAtTime(.05, at + .004); pg.gain.exponentialRampToValueAtTime(.0001, at + .09 + Math.random() * .08);
+      p.connect(pg).connect(out); p.start(at); p.stop(at + .2);
+    }
+  } catch (e) { /* без звука */ }
+}
+
+const rr = (a, b) => a + Math.random() * (b - a);
+const alphaOf = c => { const m = /rgba?\(([^)]+)\)/.exec(c || ''); if (!m) return c && c !== 'transparent' ? 1 : 0; const p = m[1].split(/[\s,/]+/).filter(Boolean); return p.length > 3 ? parseFloat(p[3]) : 1; };
+const SHARD_SEL = '.top, .card, .opt, .btn, .pill, .tag, .icon-btn, .lvl-badge, .search, .feedback, .modal, .progress, .bar, .kpi, .nav a, .combo, .credit';
+
+// Режет прямоугольник на треугольные осколки по сетке со сдвинутыми узлами.
+function shardTris(w, h, cols, rows) {
+  const P = [];
+  for (let i = 0; i <= cols; i++) { P[i] = []; for (let j = 0; j <= rows; j++) {
+    const jx = i > 0 && i < cols ? rr(-.32, .32) * w / cols : 0, jy = j > 0 && j < rows ? rr(-.32, .32) * h / rows : 0;
+    P[i][j] = [i * w / cols + jx, j * h / rows + jy];
+  } }
+  const T = [];
+  for (let i = 0; i < cols; i++) for (let j = 0; j < rows; j++) {
+    const a = P[i][j], b = P[i + 1][j], c = P[i + 1][j + 1], d = P[i][j + 1];
+    if (Math.random() < .5) T.push([a, b, c], [a, c, d]); else T.push([a, b, d], [b, c, d]);
+  }
+  return T;
+}
+
+// Собирает осколки видимой части страницы: фон экрана, плашки элементов и слова.
+function boomCollect(root, ov, layer, budget) {
+  const W = innerWidth, H = innerHeight, frags = [], tops = [];
+  const vis = r => r.width > 1 && r.height > 1 && r.bottom > 0 && r.top < H && r.right > 0 && r.left < W;
+  const addShards = (r, style, cols, rows, kind) => {
+    for (const tri of shardTris(r.width, r.height, cols, rows)) {
+      const xs = tri.map(p => p[0]), ys = tri.map(p => p[1]);
+      const x0 = Math.min(...xs), y0 = Math.min(...ys), w = Math.max(...xs) - x0, h = Math.max(...ys) - y0;
+      if (w < 1 || h < 1) continue;
+      const el = document.createElement('div'); el.className = 'kb-f';
+      el.style.cssText = `left:${r.left + x0}px;top:${r.top + y0}px;width:${w}px;height:${h}px;clip-path:polygon(${tri.map(p => `${(p[0] - x0).toFixed(1)}px ${(p[1] - y0).toFixed(1)}px`).join(',')})`;
+      const inn = document.createElement('div'); inn.className = 'kb-in';
+      inn.style.cssText = `left:${-x0}px;top:${-y0}px;width:${r.width}px;height:${r.height}px;${style}`;
+      el.appendChild(inn); layer.appendChild(el);
+      frags.push({ el, kind, cx: r.left + x0 + w / 2, cy: r.top + y0 + h / 2, h });
+    }
+  };
+  // 1) сам экран
+  const bcs = getComputedStyle(document.body);
+  addShards({ left: 0, top: 0, width: W, height: H }, `background-color:${bcs.backgroundColor};background-image:${bcs.backgroundImage}`, W < 600 ? 5 : 8, W < 600 ? 7 : 5, 'bg');
+  // 2) плашки: карточки, кнопки, шапка
+  let left = budget;
+  for (const e of root.querySelectorAll(SHARD_SEL)) {
+    if (ov.contains(e) || left <= 0) continue;
+    const r = e.getBoundingClientRect(); if (!vis(r)) continue;
+    const cs = getComputedStyle(e);
+    if (cs.visibility === 'hidden' || +cs.opacity < .05 || cs.display === 'none') continue;
+    const hasBg = cs.backgroundImage !== 'none' || alphaOf(cs.backgroundColor) > .04;
+    const hasBd = parseFloat(cs.borderTopWidth) > 0 && alphaOf(cs.borderTopColor) > .04;
+    if (!hasBg && !hasBd) continue;
+    const cols = Math.max(1, Math.min(6, Math.round(r.width / 130))), rows = Math.max(1, Math.min(4, Math.round(r.height / 85)));
+    const n = left > cols * rows * 2 ? [cols, rows] : [1, 1];
+    left -= n[0] * n[1] * 2;
+    addShards(r, `background-color:${cs.backgroundColor};background-image:${cs.backgroundImage};background-size:${cs.backgroundSize};background-position:${cs.backgroundPosition};border:${cs.borderTopWidth} ${cs.borderTopStyle} ${cs.borderTopColor};border-radius:${cs.borderRadius};box-shadow:${cs.boxShadow}`, n[0], n[1], 'el');
+    if (cs.position !== 'fixed' && !tops.some(t => t.contains(e))) tops.push(e);
+  }
+  // 3) слова
+  const nodes = [], tw = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: n => {
+      const p = n.parentElement;
+      if (!p || !n.nodeValue.trim() || ov.contains(p) || p.closest('script,style,textarea,select,svg')) return NodeFilter.FILTER_REJECT;
+      return vis(p.getBoundingClientRect()) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    }
+  });
+  let total = 0;
+  while (tw.nextNode()) { const n = tw.currentNode, w = n.nodeValue.match(/\S+/g); nodes.push(n); total += w.length; }
+  const k = Math.max(1, Math.ceil(total / 520)), styles = new Map(), range = document.createRange();
+  for (const n of nodes) {
+    const p = n.parentElement;
+    let st = styles.get(p);
+    if (!st) {
+      const cs = getComputedStyle(p);
+      if (cs.visibility === 'hidden' || +cs.opacity < .05) { styles.set(p, 'skip'); continue; }
+      const clear = alphaOf(cs.webkitTextFillColor || cs.color) < .05;
+      st = `font:${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily};letter-spacing:${cs.letterSpacing};text-transform:${cs.textTransform};color:${clear ? 'var(--brand)' : cs.color};text-shadow:${cs.textShadow}`;
+      styles.set(p, st);
+    }
+    if (st === 'skip') continue;
+    const words = [...n.nodeValue.matchAll(/\S+/g)];
+    const put = (a, b) => {
+      range.setStart(n, a.index); range.setEnd(n, b.index + b[0].length);
+      const rs = range.getClientRects();
+      if (rs.length !== 1) return false;
+      const r = rs[0]; if (!vis(r)) return true;
+      const el = document.createElement('span'); el.className = 'kb-t';
+      el.textContent = n.nodeValue.slice(a.index, b.index + b[0].length);
+      el.style.cssText = `left:${r.left}px;top:${r.top}px;line-height:${r.height}px;${st}`;
+      layer.appendChild(el);
+      frags.push({ el, kind: 'txt', cx: r.left + r.width / 2, cy: r.top + r.height / 2, h: r.height });
+      return true;
+    };
+    for (let i = 0; i < words.length; i += k) {
+      const grp = words.slice(i, i + k);
+      if (!put(grp[0], grp[grp.length - 1])) for (const w of grp) put(w, w);
+    }
+  }
+  return { frags, tops };
+}
+
+let boomCur = null;
+function creeperBoom(anchor) {
+  if (!S.settings.creeper || matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
+  if (boomCur) boomCur.finish();
+  const root = document.fullscreenElement || document.body;
+  const W = innerWidth, H = innerHeight;
+  const u = Math.round(Math.max(6, Math.min(12, H / 50))), cw = 8 * u, ch = 26 * u;
+  const ar = anchor && anchor.getBoundingClientRect();
+  const cx = Math.max(cw, Math.min(W - cw, ar && ar.width ? ar.left + ar.width / 2 : W / 2));
+  const ex = cx, ey = H - ch * .62;
+  const timers = [], hidden = [];
+  let raf = 0, hiss = null, done = false, tops = [];
+  const later = (ms, f) => timers.push(setTimeout(f, ms));
+
+  const ov = document.createElement('div'); ov.className = 'kb-ov';
+  ov.style.setProperty('--ex', ex + 'px'); ov.style.setProperty('--ey', ey + 'px');
+  ov.innerHTML = `<div class="kb-vig"></div><div class="kb-layer"></div><div class="kb-creeper" style="left:${cx - cw / 2}px;width:${cw}px;height:${ch}px"><img src="${creeperSprite()}" alt=""></div><div class="kb-skip">нажми, чтобы пропустить</div>`;
+  root.appendChild(ov);
+  const layer = $('.kb-layer', ov), cr = $('.kb-creeper', ov), img = $('img', cr), vig = $('.kb-vig', ov);
+
+  const restore = fast => {
+    hidden.forEach(n => { n.style.visibility = ''; n.animate([{ opacity: 0 }, { opacity: 1 }], { duration: fast ? 160 : 380, easing: 'ease-out' }); });
+    if (!fast) tops.forEach(e => {
+      const r = e.getBoundingClientRect(), d = Math.hypot(r.left + r.width / 2 - ex, r.top + r.height / 2 - ey);
+      e.animate([{ opacity: 0, transform: `translateY(-16px) scale(.96)` }, { opacity: 1, transform: 'none' }], { duration: 420, delay: Math.min(260, d / 4), easing: 'cubic-bezier(.2,1.3,.4,1)', fill: 'backwards' });
+    });
+    hidden.length = 0;
+  };
+  const finish = (fast = true) => {
+    if (done) return; done = true;
+    timers.forEach(clearTimeout); cancelAnimationFrame(raf);
+    try { hiss && hiss.stop(); } catch (e) { /* уже остановлен */ }
+    removeEventListener('keydown', onKey, true);
+    restore(fast);
+    if (fast) ov.remove();
+    else ov.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 380, easing: 'ease-in' }).onfinish = () => ov.remove();
+    if (boomCur === api) boomCur = null;
+  };
+  const onKey = () => finish(true);
+  ov.addEventListener('pointerdown', () => finish(true));
+  addEventListener('keydown', onKey, true);
+  const api = { finish };
+  boomCur = api;
+
+  // 1. Крипер выпрыгивает из-под края экрана, разбрасывая землю
+  cr.animate([{ transform: `translateY(${ch + 24}px)` }, { transform: 'translateY(0)' }], { duration: 440, easing: 'cubic-bezier(.2,1.45,.45,1)', fill: 'backwards' });
+  for (let i = 0; i < 14; i++) {
+    const d = document.createElement('div'), s = u * rr(.7, 1.3), dx = rr(-1, 1) * cw * 1.4, up = rr(.25, .6) * ch;
+    d.className = 'kb-dirt'; d.style.cssText = `left:${cx - s / 2 + rr(-.4, .4) * cw}px;top:${H - s}px;width:${s}px;height:${s}px;background:${['#7a5230', '#8f6239', '#5c3d22', '#6b8e3a'][i % 4]}`;
+    ov.appendChild(d);
+    d.animate([{ transform: 'translate(0,0) rotate(0)' }, { transform: `translate(${dx * .6}px,${-up}px) rotate(${rr(-200, 200)}deg)`, offset: .45 }, { transform: `translate(${dx}px,${s * 2}px) rotate(${rr(-400, 400)}deg)` }],
+      { duration: rr(600, 850), delay: rr(40, 140), easing: 'cubic-bezier(.3,.6,.5,1)', fill: 'both' });
+  }
+  // 2. Шипит, мигает белым и раздувается
+  later(470, () => {
+    hiss = hissSnd(1.05);
+    cr.classList.add('fuse');
+    img.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.05,1.03)', offset: .45 }, { transform: 'scale(1.12,1.07)', offset: .8 }, { transform: 'scale(1.34,1.2)' }], { duration: 1050, easing: 'ease-in', fill: 'forwards' });
+    cr.animate(Array.from({ length: 14 }, (_, i) => ({ transform: `translate(${i % 2 ? 1 : -1}px,${i % 3 - 1}px)` })), { duration: 1050, iterations: 1, composite: 'add' });
+    vig.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 1050, easing: 'ease-in', fill: 'forwards' });
+  });
+  // 3. БУМ
+  later(1520, () => {
+    let frags;
+    try {
+      const got = boomCollect(root, ov, layer, W < 600 ? 160 : 300);
+      frags = got.frags; tops = got.tops;
+    } catch (e) { console.error(e); finish(true); return; }
+    for (const n of root.children) if (n !== ov && !n.matches('script,style') && getComputedStyle(n).visibility !== 'hidden') { n.style.visibility = 'hidden'; hidden.push(n); }
+    cr.remove(); vig.remove();
+    ov.classList.add('void');
+    boomSnd();
+    try { navigator.vibrate && navigator.vibrate([60, 30, 180]); } catch (e) { /* нет вибрации */ }
+    S.stats.booms = (S.stats.booms || 0) + 1; save();
+    // ошмётки самого крипера
+    for (let i = 0; i < 44; i++) {
+      const el = document.createElement('div'), s = u * rr(.8, 1.5);
+      el.className = 'kb-f'; el.style.cssText = `left:${cx - s / 2 + rr(-.5, .5) * cw}px;top:${H - ch + rr(0, ch) - s / 2}px;width:${s}px;height:${s}px;background:${i % 9 === 0 ? '#111' : CREEPER_GREENS[i % CREEPER_GREENS.length]}`;
+      layer.appendChild(el);
+      frags.push({ el, kind: 'cr', cx: parseFloat(el.style.left) + s / 2, cy: parseFloat(el.style.top) + s / 2, h: s });
+    }
+    // физика: ударная волна расходится от крипера, дальше — гравитация
+    for (const f of frags) {
+      const dx = f.cx - ex, dy = f.cy - ey, dist = Math.max(24, Math.hypot(dx, dy));
+      const pw = f.kind === 'bg' ? 1500 * Math.exp(-dist / 560) + 120 : f.kind === 'cr' ? rr(900, 2200) : (f.kind === 'txt' ? 2600 : 2000) * Math.exp(-dist / 520) + 260;
+      Object.assign(f, {
+        x: 0, y: 0, r: 0, tx: 0,
+        vx: dx / dist * pw * rr(.7, 1.25), vy: dy / dist * pw * rr(.7, 1.25) - rr(120, f.kind === 'bg' ? 300 : 560),
+        vr: rr(-1, 1) * (120 + pw * (f.kind === 'txt' ? .45 : .25)), vt: f.kind === 'txt' ? rr(-90, 90) : rr(-320, 320),
+        d: f.kind === 'cr' ? 0 : dist / 2600
+      });
+    }
+    // вспышка, огненный шар, клубы дыма, тряска
+    const fire = document.createElement('div'), fs = Math.max(W, H) * .5;
+    fire.className = 'kb-fire'; fire.style.cssText = `left:${ex - fs / 2}px;top:${ey - fs / 2}px;width:${fs}px;height:${fs}px`;
+    ov.appendChild(fire);
+    fire.animate([{ transform: 'scale(.15)', opacity: 1 }, { transform: 'scale(1)', opacity: .9, offset: .35 }, { transform: 'scale(1.5)', opacity: 0 }], { duration: 560, easing: 'ease-out', fill: 'forwards' });
+    const flash = document.createElement('div'); flash.className = 'kb-flash'; ov.appendChild(flash);
+    flash.animate([{ opacity: .92 }, { opacity: 0 }], { duration: 320, easing: 'ease-out', fill: 'forwards' });
+    for (let i = 0; i < 22; i++) {
+      const p = document.createElement('div'), s = u * rr(5, 11), a = rr(0, Math.PI * 2), r1 = rr(0, 60), r2 = rr(90, 260);
+      p.className = 'kb-puff'; p.style.cssText = `left:${ex - s / 2}px;top:${ey - s / 2}px;width:${s}px;height:${s}px;background-image:url(${puffSprite()})`;
+      ov.appendChild(p);
+      p.animate([{ transform: `translate(${Math.cos(a) * r1}px,${Math.sin(a) * r1}px) scale(.3)`, opacity: 1 }, { transform: `translate(${Math.cos(a) * r2}px,${Math.sin(a) * r2 - 40}px) scale(1.5)`, opacity: 0 }],
+        { duration: rr(700, 1300), delay: rr(0, 160), easing: 'cubic-bezier(.1,.8,.3,1)', fill: 'both' });
+    }
+    layer.animate(Array.from({ length: 12 }, (_, i) => { const k = (12 - i) / 12 * 16; return { transform: `translate(${rr(-k, k)}px,${rr(-k, k)}px)` }; }).concat({ transform: 'none' }), { duration: 620, easing: 'linear' });
+    $('.kb-skip', ov).classList.add('on');
+
+    const G = 2600, t0 = performance.now();
+    let last = t0;
+    const step = now => {
+      const dt = Math.min(.033, (now - last) / 1000), T = (now - t0) / 1000; last = now;
+      let alive = 0;
+      for (const f of frags) {
+        if (f.gone) continue;
+        if (T < f.d) { alive++; continue; }
+        f.vy += G * dt; f.vx *= 1 - .7 * dt;
+        f.x += f.vx * dt; f.y += f.vy * dt; f.r += f.vr * dt; f.tx += f.vt * dt;
+        if (f.cy + f.y - f.h > H + 30 || Math.abs(f.cx + f.x - W / 2) > W * 1.2) { f.gone = 1; f.el.remove(); continue; }
+        alive++;
+        f.el.style.transform = `translate3d(${f.x.toFixed(1)}px,${f.y.toFixed(1)}px,0) rotate(${f.r.toFixed(1)}deg) rotateX(${f.tx.toFixed(1)}deg)`;
+      }
+      if (alive && T < 2.4) raf = requestAnimationFrame(step); else finish(false);
+    };
+    raf = requestAnimationFrame(step);
+  });
+  return true;
+}
+
 const lvTag = lv => `<span class="tag lv${lv}" title="Уровень ${lv}: ${{ A: 'воспроизведение определений', B: 'понимание и сравнение', C: 'практическое применение' }[lv]}">Уровень ${lv}</span>`;
 const topicTag = t => `<span class="tag" style="border-color:${TOP[t].color}">${TOP[t].icon} ${esc(TOP[t].n)}</span>`;
 const isReal = q => /^Тест /.test(q.src);
@@ -225,6 +530,7 @@ function renderHud() {
   const st = $('#streakPill'); if (st) st.innerHTML = `🔥 ${streak()}`;
   const mb = $('#mistBadge'); const mc = mistakes().length; if (mb) { mb.textContent = mc; mb.classList.toggle('hidden', !mc); }
   const sb = $('#soundBtn'); if (sb) sb.textContent = S.settings.sound ? '🔊' : '🔇';
+  const cb = $('#creeperBtn'); if (cb) { if (!cb.firstChild) cb.innerHTML = creeperFaceSVG(); cb.classList.toggle('off', !S.settings.creeper); cb.title = S.settings.creeper ? 'Крипер при ошибке: включён' : 'Крипер при ошибке: выключен'; }
 }
 
 // ======================= ROUTER =======================
@@ -418,7 +724,7 @@ function renderQuestion(host, q, onChecked) {
       <div class="row" style="margin-top:10px"><button class="btn ghost sm" data-more>🔍 Подробнее <kbd>D</kbd></button></div>
     </div>`;
     $('[data-more]', fb).onclick = () => toggleMore();
-    sfx(ok ? 'ok' : 'bad');
+    if (ok || !creeperBoom(btns.find(b => b.classList.contains('wrong')) || fb)) sfx(ok ? 'ok' : 'bad');
     onChecked(ok, fb);
   };
   const toggleMore = () => { const m = $('.more', host); if (m) { m.classList.toggle('hidden'); const b = $('[data-more]', host); if (b) b.remove(); } };
@@ -820,6 +1126,7 @@ window.App = {
 function initChrome() {
   $('#themeBtn').onclick = () => { const order = ['auto', 'light', 'dark']; S.settings.theme = order[(order.indexOf(S.settings.theme) + 1) % 3]; save(); applyTheme(); };
   $('#soundBtn').onclick = () => { S.settings.sound = !S.settings.sound; save(); renderHud(); sfx('tick'); };
+  $('#creeperBtn').onclick = () => { S.settings.creeper = !S.settings.creeper; save(); renderHud(); sfx('tick'); toast(S.settings.creeper ? '💥' : '😌', S.settings.creeper ? 'Крипер включён' : 'Крипер выключен', S.settings.creeper ? 'Ошибся — получи взрыв' : 'Ошибки без взрывов'); };
   const si = $('#searchIn'); let st = 0;
   si.addEventListener('input', () => { clearTimeout(st); st = setTimeout(() => { const v = si.value.trim(); if (v) { location.hash = '#search/' + encodeURIComponent(v); } }, 220); });
   si.addEventListener('keydown', e => { if (e.key === 'Enter') { const v = si.value.trim(); if (v) go('#search/' + encodeURIComponent(v)); } });
