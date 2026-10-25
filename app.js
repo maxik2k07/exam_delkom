@@ -233,12 +233,12 @@ let leaveHook = null;
 function go(h) { if (location.hash === h) render(); else location.hash = h; }
 function render() {
   if (leaveHook) { try { leaveHook(); } catch (e) { console.error(e); } leaveHook = null; }
-  keyHandler = null;
+  keyHandler = null; clearInterval(exTimer); exTimer = 0;
   const [route, arg] = (location.hash.slice(1) || 'home').split('/');
   $$('.nav a').forEach(a => a.classList.toggle('on', a.dataset.r === route));
   const main = $('#main'); main.innerHTML = '';
   window.scrollTo(0, 0);
-  const views = { home: viewHome, theory: viewTheory, train: viewTrain, cards: viewCards, mistakes: viewMistakes, traps: viewTraps, stats: viewStats, search: viewSearch, game: viewGame };
+  const views = { home: viewHome, theory: viewTheory, train: viewTrain, cards: viewCards, mistakes: viewMistakes, traps: viewTraps, stats: viewStats, search: viewSearch, game: viewGame, exam: viewExam };
   (views[route] || viewHome)(main, arg ? decodeURIComponent(arg) : '');
   renderHud(); checkAch();
 }
@@ -268,11 +268,12 @@ function viewHome(main) {
     <div class="card hero-main">
       <div class="row"><span class="tag" style="background:rgba(255,255,255,.2);color:#fff;border-color:transparent">Уровень ${p.l} · ${esc(titleOf(p.l))}</span></div>
       <h1 style="margin-top:12px">Деловые коммуникации — тренажёр</h1>
-      <p class="sub">${Q.length} вопросов в стиле экзамена, ${TOPICS.length} конспектов, ${CARDS.length} карточек и ${TRAPS.length} ловушек. Экзамен: 40 вопросов за 80 минут, A 50% · B 40% · C 10%.</p>
+      <p class="sub">${Q.length} вопросов в стиле экзамена, ${TOPICS.length} конспектов, ${CARDS.length} карточек и ${TRAPS.length} ловушек. Экзамен <b>26.10 в 11:10</b>${(() => { const l = EXAM_AT - Date.now(); return l > 0 ? ` — осталось <b>${Math.floor(l / 3600000)} ч ${Math.floor(l % 3600000 / 60000)} мин</b>` : ''; })()}: 40 вопросов за 80 минут, A 50% · B 40% · C 10%, максимум 64 балла.</p>
       <div class="xpbar"><i style="width:${p.p}%"></i></div>
       <div class="row small" style="font-weight:800"><span>${p.cur} / ${p.need} XP до уровня ${p.l + 1}</span><span class="spacer"></span><span>⭐ ${S.xp} XP всего</span></div>
       <div class="row" style="margin-top:16px">
         <a class="btn warn big" href="#train">▶ Тренировка</a>
+        <a class="btn big" href="#exam" style="background:#fff;color:var(--brand)">🎓 Пробный экзамен</a>
         ${mc ? `<a class="btn bad big" href="#mistakes">🩹 Ошибки (${mc})</a>` : ''}
         <a class="btn ghost big" href="#game" style="background:rgba(255,255,255,.18);color:#fff;border-color:transparent;box-shadow:0 4px 0 rgba(0,0,0,.18)">⛏️ Игра</a>
       </div>
@@ -673,6 +674,125 @@ function viewSearch(main, query) {
   <div class="card">${hits.slice(0, 80).map(x => `<div class="sr"><div class="row" style="gap:6px;margin-bottom:4px"><span class="tag">${lab[x.kind]}</span>${topicTag(x.t)}${x.kind === 'theory' ? `<a class="small" href="#theory/${x.t}">открыть конспект →</a>` : ''}</div>
     ${x.kind === 'q' ? `<b>${hl(x.q.q, words)}</b><div class="small" style="color:var(--ok-d);font-weight:700;margin-top:4px">✔ ${x.q.a.map(i => hl(x.q.o[i], words)).join(' · ✔ ')}</div><div class="small muted">${hl(x.q.why, words)}</div>` : `<div>${hl(cut(x.txt), words)}</div>`}
   </div>`).join('') || '<p class="muted">Ничего не найдено. Попробуй другое слово или часть слова.</p>'}</div>`;
+}
+
+// ======================= ПРОБНЫЙ ЭКЗАМЕН =======================
+// Как StartExam: 40 вопросов (20 A · 16 B · 4 C), 80 минут, баллы 1/2/3 (максимум 64), «выберите все» — только полный набор.
+const EXAM_AT = new Date('2026-10-26T11:10:00+03:00').getTime();
+const PTS = { A: 1, B: 2, C: 3 };
+const GRADES = [[63, 10], [61, 9], [60, 8], [57, 7], [54, 6], [50, 5], [44, 4], [36, 3], [28, 2], [0, 1]];
+const gradeOf = raw => GRADES.find(([min]) => raw >= min)[1];
+const plural = (n, a, b, c) => { const m = n % 10, h = n % 100; return m === 1 && h !== 11 ? a : m >= 2 && m <= 4 && (h < 10 || h >= 20) ? b : c; };
+let exTimer = 0;
+function examState() { return S.exam || (S.exam = { run: null, hist: [], last: null }); }
+function buildMock() {
+  const pickLv = (lv, n) => {
+    const pool = shuffle(Q.filter(q => q.lv === lv)), out = [], cnt = {}, cap = t => t === 'lit' ? 1 : Math.ceil(n / 8) + 1;
+    for (const t of TOPICS.map(x => x.id).filter(t => t !== 'lit')) { const q = pool.find(x => x.t === t); if (q && out.length < n) { out.push(q); cnt[t] = 1; } }
+    for (const q of pool) { if (out.length >= n) break; if (out.includes(q) || (cnt[q.t] || 0) >= cap(q.t)) continue; cnt[q.t] = (cnt[q.t] || 0) + 1; out.push(q); }
+    for (const q of pool) { if (out.length >= n) break; if (!out.includes(q)) out.push(q); }
+    return shuffle(out);
+  };
+  const qs = [...pickLv('A', 20), ...pickLv('B', 16), ...pickLv('C', 4)];
+  return { at: Date.now(), ids: qs.map(q => q.id), ord: Object.fromEntries(qs.map(q => [q.id, q.fix ? q.o.map((_, i) => i) : shuffle(q.o.map((_, i) => i))])), ans: {}, flags: {}, i: 0, confirm: false };
+}
+const QBY = id => Q.find(q => q.id === id);
+const isRight = (q, a) => !!a && a.length === q.a.length && q.a.every(i => a.includes(i));
+function finishExam() {
+  const E = examState(), run = E.run; if (!run) return;
+  let raw = 0, ok = 0; const byT = {};
+  run.ids.forEach(id => { const q = QBY(id); if (!q) return; const a = run.ans[id], r = isRight(q, a); if (r) { raw += PTS[q.lv]; ok++; } const t = byT[q.t] = byT[q.t] || { ok: 0, n: 0 }; t.n++; if (r) t.ok++; if (a && a.length) record(q, r); });
+  E.hist.push({ at: run.at, raw, ok, grade: gradeOf(raw) });
+  E.last = { ids: run.ids, ord: run.ord, ans: run.ans, raw, ok, byT, i: 0 };
+  E.run = null; E.review = true; clearInterval(exTimer); exTimer = 0; save(); go('#exam'); window.scrollTo(0, 0);
+}
+function viewExam(main) {
+  const E = examState();
+  if (E.run && Date.now() - E.run.at >= 80 * 60000) { finishExam(); return; }
+  if (E.run) return examRun(main, E);
+  if (E.review && E.last) return examReview(main, E);
+  const best = E.hist.length ? Math.max(...E.hist.map(h => h.raw)) : null, left = EXAM_AT - Date.now();
+  main.innerHTML = `<h1>🎓 Пробный экзамен</h1>
+    <p class="sub">Как настоящий в StartExam: 40 вопросов (20 уровня A, 16 — B, 4 — C), 80 минут, баллы 1 / 2 / 3, вопрос «выберите все» засчитывается только при полностью верном наборе. Ответы и разбор — после завершения. Таймер идёт, даже если закрыть вкладку.</p>
+    <div class="grid g3">
+      <div class="card"><div class="small muted">Попыток</div><div class="big-num">${E.hist.length}</div></div>
+      <div class="card"><div class="small muted">Лучший результат</div><div class="big-num">${best == null ? '—' : best + ' / 64'}</div>${best != null ? `<div class="small">оценка ${gradeOf(best)}</div>` : ''}</div>
+      <div class="card"><div class="small muted">До экзамена 26.10 в 11:10</div><div class="big-num">${left > 0 ? `${Math.floor(left / 3600000)} ч ${Math.floor(left % 3600000 / 60000)} мин` : 'уже идёт'}</div></div>
+    </div>
+    <div class="row" style="margin:18px 0"><button class="btn big" id="exStart">▶ Начать экзамен · 80 минут</button></div>
+    <div class="grid g2">
+      <div class="card"><h3>Перевод баллов в оценку</h3><table class="tbl">${[['63–64', 10], ['61–62', 9], ['60', 8], ['57–59', 7], ['54–56', 6], ['50–53', 5], ['44–49', 4], ['36–43', 3], ['28–35', 2], ['меньше 28', 1]].map(([r, g]) => `<tr><td>${r}</td><td><b>${g}</b>${g === 6 ? ' — хорошая цель' : g === 4 ? ' — минимум' : ''}</td></tr>`).join('')}</table></div>
+      <div class="card"><h3>Тактика на экзамене</h3><ul class="small">
+        <li>Ищи варианты «Нет верного ответа», «Ни один из вариантов не верен», «Всё перечисленное верно» — в тестах этого года они бывали правильными.</li>
+        <li>Следи за отрицаниями: «НЕ является», «верно или нет».</li>
+        <li>«Только», «всегда», «никогда», «исключительно» — почти всегда ловушка.</li>
+        <li>В «выберите все» сначала мысленно отметь всё верное, потом кликай.</li>
+        <li>Сначала пройди лёгкие вопросы, сложные отметь «вернуться позже»; на C-кейсы оставь 15 минут.</li>
+        <li>Экзамен — 40% итоговой оценки и блокирующий: уровень A — по слайдам и основной литературе.</li></ul></div>
+    </div>
+    ${E.hist.length ? `<div class="card" style="margin-top:16px"><h3>История попыток</h3><table class="tbl">${E.hist.slice().reverse().map(h => `<tr><td>${new Date(h.at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td><td><b>${h.raw} / 64</b></td><td>${h.ok} / 40 верных</td><td>оценка ${h.grade}</td></tr>`).join('')}</table>${E.last ? '<button class="btn ghost sm" id="exLast" style="margin-top:10px">🔍 Разбор последней попытки</button>' : ''}</div>` : ''}`;
+  $('#exStart').onclick = () => { E.run = buildMock(); E.review = false; save(); viewExam(main); };
+  const l = $('#exLast'); if (l) l.onclick = () => { E.review = true; E.last.i = 0; viewExam(main); };
+  keyHandler = e => { if (e.key === 'Enter') $('#exStart').click(); };
+}
+function examRun(main, E) {
+  const run = E.run, i = Math.min(run.i, run.ids.length - 1), id = run.ids[i], q = QBY(id), multi = !!q.m, a = run.ans[id] || [];
+  const answered = run.ids.filter(x => (run.ans[x] || []).length).length;
+  main.innerHTML = `<div class="quiz-wrap">
+    <div class="row" style="justify-content:space-between;margin-bottom:10px"><span class="ex-timer" id="exTime">80:00</span><span class="small muted">отвечено ${answered} / ${run.ids.length}</span></div>
+    <div class="card ex-grid">${run.ids.map((x, k) => `<button class="${(run.ans[x] || []).length ? 'ans' : ''} ${k === i ? 'cur' : ''} ${run.flags[x] ? 'flag' : ''}" data-k="${k}">${k + 1}</button>`).join('')}</div>
+    <div class="card qcard">
+      <div class="row" style="justify-content:space-between"><span class="small muted">Вопрос ${i + 1} · уровень ${q.lv} · ${PTS[q.lv]} ${plural(PTS[q.lv], 'балл', 'балла', 'баллов')}</span><label class="small" style="cursor:pointer"><input type="checkbox" id="exFlag" ${run.flags[id] ? 'checked' : ''}> вернуться позже</label></div>
+      <p class="qtext" style="margin-top:8px">${esc(q.q)}</p>
+      <div class="qhint">${multi ? '☑️ Выберите все верные варианты' : '🔘 Выберите один ответ'}</div>
+      <div class="opts">${run.ord[id].map((oi, k) => `<button class="opt ${multi ? 'multi' : ''} ${a.includes(oi) ? 'sel' : ''}" data-oi="${oi}"><span class="k">${k + 1}</span><span class="lab">${esc(q.o[oi])}</span></button>`).join('')}</div>
+      <div class="row" style="margin-top:14px"><button class="btn ghost" id="exPrev" ${i ? '' : 'disabled'}>← Назад</button><button class="btn ghost" id="exNext" ${i < run.ids.length - 1 ? '' : 'disabled'}>Дальше →</button><span class="spacer"></span><button class="btn pink" id="exEnd">Завершить</button></div>
+      ${run.confirm ? `<div class="feedback no" style="margin-top:12px">Завершить экзамен? Без ответа: <b>${run.ids.length - answered}</b>.<div class="row" style="margin-top:8px"><button class="btn sm" id="exYes">Да, завершить</button><button class="btn ghost sm" id="exNo">Продолжить</button></div></div>` : ''}
+    </div></div>`;
+  const setI = k => { run.i = k; run.confirm = false; save(); examRun(main, E); };
+  $$('.ex-grid button', main).forEach(b => b.onclick = () => setI(+b.dataset.k));
+  $$('.opt', main).forEach(b => b.onclick = () => {
+    const oi = +b.dataset.oi; let cur = run.ans[id] || [];
+    cur = multi ? (cur.includes(oi) ? cur.filter(x => x !== oi) : [...cur, oi]) : [oi];
+    run.ans[id] = cur; save(); sfx('tick'); examRun(main, E);
+  });
+  $('#exPrev').onclick = () => setI(i - 1); $('#exNext').onclick = () => setI(i + 1);
+  $('#exFlag').onchange = e => { run.flags[id] = e.target.checked; save(); examRun(main, E); };
+  $('#exEnd').onclick = () => { run.confirm = true; examRun(main, E); };
+  const y = $('#exYes'); if (y) { y.onclick = finishExam; $('#exNo').onclick = () => { run.confirm = false; examRun(main, E); }; }
+  const tick = () => { const el = $('#exTime'); if (!E.run || !el) { clearInterval(exTimer); exTimer = 0; return; } const left = E.run.at + 80 * 60000 - Date.now(); if (left <= 0) { finishExam(); return; } el.textContent = `${Math.floor(left / 60000)}:${String(Math.floor(left % 60000 / 1000)).padStart(2, '0')}`; el.classList.toggle('low', left < 10 * 60000); };
+  clearInterval(exTimer); exTimer = setInterval(tick, 1000); tick();
+  keyHandler = e => {
+    if (/^[1-9]$/.test(e.key)) { const b = $$('.opt', main)[+e.key - 1]; if (b) b.click(); }
+    else if (e.key === 'ArrowRight' && i < run.ids.length - 1) setI(i + 1);
+    else if (e.key === 'ArrowLeft' && i) setI(i - 1);
+  };
+}
+function examReview(main, E) {
+  const L = E.last, i = L.i, id = L.ids[i], q = QBY(id), a = L.ans[id] || [], g = gradeOf(L.raw);
+  const right = new Set(q.a);
+  main.innerHTML = `<h1>Результат пробного экзамена</h1>
+    <div class="card"><div class="row" style="gap:28px;align-items:flex-end;flex-wrap:wrap">
+      <div><div class="small muted">Баллы</div><div class="big-num">${L.raw}<span class="muted" style="font-size:20px"> / 64</span></div></div>
+      <div><div class="small muted">Оценка</div><div class="big-num">${g}${g >= 6 ? ' 🎯' : g >= 4 ? '' : ' 😬'}</div></div>
+      <div><div class="small muted">Верных</div><div class="big-num">${L.ok} / ${L.ids.length}</div></div></div>
+      <p class="small" style="margin:10px 0">${L.raw >= 54 ? 'Уровень хорошей оценки (6+). Закрепи: ошибки и карточки.' : L.raw >= 44 ? `До шестёрки ${54 - L.raw} ${plural(54 - L.raw, 'балл', 'балла', 'баллов')}. Разбери ошибки ниже и пройди ещё раз.` : `До четвёрки ${44 - L.raw} ${plural(44 - L.raw, 'балл', 'балла', 'баллов')}. Слабые темы — ниже; вернись к их конспектам.`}</p>
+      ${Object.entries(L.byT).sort((x, y) => TOPICS.findIndex(t => t.id === x[0]) - TOPICS.findIndex(t => t.id === y[0])).map(([t, r]) => `<div class="row" style="gap:10px;margin:4px 0"><span style="width:44px" class="small"><b>${esc(TOP[t].n)}</b></span><div class="bar" style="flex:1"><i style="width:${Math.round(100 * r.ok / r.n)}%"></i></div><span class="small">${r.ok}/${r.n}</span></div>`).join('')}
+    </div>
+    <div class="card" style="margin-top:14px"><div class="small muted">Разбор — нажми на номер (зелёный — верно, красный — ошибка)</div><div class="ex-grid" style="margin-top:8px">${L.ids.map((x, k) => { const qq = QBY(x); return `<button class="${isRight(qq, L.ans[x]) ? 'ok' : 'bad'} ${k === i ? 'cur' : ''}" data-k="${k}">${k + 1}</button>`; }).join('')}</div></div>
+    <div class="card qcard" style="margin-top:14px">
+      <div class="qhead">${lvTag(q.lv)}${topicTag(q.t)}${srcTag(q)}</div>
+      <p class="qtext">${esc(q.q)}</p>
+      <div class="opts">${L.ord[id].map((oi, k) => `<button class="opt ${q.m ? 'multi' : ''} ${right.has(oi) ? 'right' : a.includes(oi) ? 'wrong' : ''}" disabled><span class="k">${k + 1}</span><span class="lab">${esc(q.o[oi])}${right.has(oi) && !a.includes(oi) ? '<span class="mark">← верный, не выбран</span>' : ''}</span></button>`).join('')}</div>
+      <div class="feedback ${isRight(q, a) ? 'ok' : 'no'}" style="margin-top:12px"><h3>${isRight(q, a) ? '✅ Верно' : a.length ? '❌ Неверно' : '⏭ Без ответа'}</h3><div>${esc(q.why)}</div><div class="small" style="margin-top:6px">${esc(q.more || '')}</div><div style="margin-top:6px"><a href="#theory/${q.t}">📖 Конспект темы</a></div></div>
+      <div class="row" style="margin-top:12px"><button class="btn ghost" id="rvPrev" ${i ? '' : 'disabled'}>←</button><button class="btn ghost" id="rvNext" ${i < L.ids.length - 1 ? '' : 'disabled'}>→</button><button class="btn ghost" id="rvBad">Следующая ошибка</button><span class="spacer"></span><button class="btn" id="rvClose">Готово</button></div>
+    </div>`;
+  const setI = k => { L.i = k; examReview(main, E); window.scrollTo(0, 0); };
+  $$('.ex-grid button', main).forEach(b => b.onclick = () => setI(+b.dataset.k));
+  $('#rvPrev').onclick = () => setI(i - 1); $('#rvNext').onclick = () => setI(i + 1);
+  $('#rvBad').onclick = () => { for (let k = 1; k <= L.ids.length; k++) { const j = (i + k) % L.ids.length; if (!isRight(QBY(L.ids[j]), L.ans[L.ids[j]])) return setI(j); } };
+  $('#rvClose').onclick = () => { E.review = false; save(); viewExam(main); };
+  keyHandler = e => { if (e.key === 'ArrowRight' && i < L.ids.length - 1) setI(i + 1); else if (e.key === 'ArrowLeft' && i) setI(i - 1); };
 }
 
 // ======================= GAME =======================

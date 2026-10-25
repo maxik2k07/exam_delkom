@@ -6,5 +6,8 @@ window.TOPICS = [
   { id: 'l4',  n: 'Л4', title: 'Устная коммуникация и встречи', icon: '🎙️', src: '2026', color: '#69db7c' },
   { id: 'l5',  n: 'Л5', title: 'Команда, конфликты, ОС, кризис', icon: '⚔️', src: '2026', color: '#38d9a9' },
   { id: 'l6',  n: 'Л6', title: 'ИТ-язык → язык бизнеса', icon: '💻', src: '2026', color: '#4dabf7' },
-  { id: 'sem', n: 'Сем', title: 'Семинары: Минто, SCQA, small talk', icon: '🧩', src: '2026', color: '#9775fa' }
+  { id: 'l7',  n: 'Л7', title: 'Публичные выступления и презентации', icon: '🎤', src: '2026', color: '#f783ac' },
+  { id: 'l8',  n: 'Л8', title: 'Переговоры и кросс-культура', icon: '🤝', src: '2026', color: '#e599f7' },
+  { id: 'sem', n: 'Сем', title: 'Семинары: Минто, SCQA, small talk', icon: '🧩', src: '2026', color: '#9775fa' },
+  { id: 'lit', n: 'Лит', title: 'Литература: Чалдини и Кузнецов', icon: '📚', src: '2026', color: '#66d9e8' }
 ];
