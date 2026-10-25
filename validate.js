@@ -3,7 +3,7 @@ const fs = require('fs'), vm = require('vm'), path = require('path');
 const here = __dirname, root = path.basename(here) === 'tools' ? path.join(here, '..') : here;
 const find = f => [path.join(root, 'src', f), path.join(here, f)].find(p => fs.existsSync(p));
 const ctx = { console }; ctx.window = ctx; vm.createContext(ctx);
-for (const f of ['data_topics.js', 'theory_1.js', 'theory_2.js', 'theory_3.js', 'theory_4.js', 'theory_5.js', 'data_traps_cards.js', 'q_tests_2026.js', 'q_l1_l2.js', 'q_l3_l4.js', 'q_l5_l6.js', 'q_l7_l8.js', 'q_sem.js'])
+for (const f of ['data_topics.js', 'theory_1.js', 'theory_2.js', 'theory_3.js', 'theory_4.js', 'theory_5.js', 'data_focus.js', 'data_traps_cards.js', 'q_tests_2026.js', 'q_l1_l2.js', 'q_l3_l4.js', 'q_l5_l6.js', 'q_l7_l8.js', 'q_sem.js', 'q_focus.js'])
   vm.runInContext(fs.readFileSync(find(f), 'utf8'), ctx, { filename: f });
 const { Q, TOPICS, THEORY, CARDS, TRAPS } = ctx;
 const tids = new Set(TOPICS.map(t => t.id)); let bad = 0; const ids = new Set();

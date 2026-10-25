@@ -544,7 +544,7 @@ function render() {
   $$('.nav a').forEach(a => a.classList.toggle('on', a.dataset.r === route));
   const main = $('#main'); main.innerHTML = '';
   window.scrollTo(0, 0);
-  const views = { home: viewHome, theory: viewTheory, train: viewTrain, cards: viewCards, mistakes: viewMistakes, traps: viewTraps, stats: viewStats, search: viewSearch, game: viewGame, exam: viewExam };
+  const views = { home: viewHome, theory: viewTheory, train: viewTrain, cards: viewCards, mistakes: viewMistakes, traps: viewTraps, stats: viewStats, search: viewSearch, game: viewGame, exam: viewExam, focus: viewFocus };
   (views[route] || viewHome)(main, arg ? decodeURIComponent(arg) : '');
   renderHud(); checkAch();
 }
@@ -580,6 +580,7 @@ function viewHome(main) {
       <div class="row" style="margin-top:16px">
         <a class="btn warn big" href="#train">▶ Тренировка</a>
         <a class="btn big" href="#exam" style="background:#fff;color:var(--brand)">🎓 Пробный экзамен</a>
+        <a class="btn big" href="#focus" style="background:#fff;color:var(--pink)">⭐ Важное от лектора</a>
         ${mc ? `<a class="btn bad big" href="#mistakes">🩹 Ошибки (${mc})</a>` : ''}
         <a class="btn ghost big" href="#game" style="background:rgba(255,255,255,.18);color:#fff;border-color:transparent;box-shadow:0 4px 0 rgba(0,0,0,.18)">⛏️ Игра</a>
       </div>
@@ -990,13 +991,91 @@ const GRADES = [[63, 10], [61, 9], [60, 8], [57, 7], [54, 6], [50, 5], [44, 4], 
 const gradeOf = raw => GRADES.find(([min]) => raw >= min)[1];
 const plural = (n, a, b, c) => { const m = n % 10, h = n % 100; return m === 1 && h !== 11 ? a : m >= 2 && m <= 4 && (h < 10 || h >= 20) ? b : c; };
 let exTimer = 0;
+// ======================= ВАЖНОЕ (подсказки лектора) =======================
+const FOCUS_RE = Object.fromEntries(FOCUS.map(f => [f.id, new RegExp(f.kw, 'i')]));
+const FOCUS_OF = new Map(Q.map(q => {
+  const txt = [q.q, ...q.o].join(' '); // без разбора: там упоминаются и соседние темы
+  return [q.id, FOCUS.filter(f => f.id === 'def' ? q.lv === 'A' : FOCUS_RE[f.id].test(txt)).map(f => f.id)];
+}));
+const focusPrefs = { secs: new Set(FOCUS.map(f => f.id)), count: 20 };
+const inFocus = (q, secs = focusPrefs.secs) => FOCUS_OF.get(q.id).some(id => secs.has(id));
+function focusOpenScore(o) {
+  const st = (S.open || {})[o.id] || {}, k = (st.c || []).filter(Boolean).length;
+  return { st, k, pts: Math.round(3 * k / o.crit.length) };
+}
+function viewFocus(main, arg) {
+  S.open = S.open || {};
+  const draw = () => {
+    const pool = Q.filter(q => inFocus(q));
+    const chip = (on, label, attr) => `<span class="chip ${on ? 'on' : ''}" ${attr}>${label}</span>`;
+    const secN = f => Q.filter(q => FOCUS_OF.get(q.id).includes(f.id)).length;
+    const lvN = l => pool.filter(q => q.lv === l).length;
+    main.innerHTML = `
+    <div class="th-layout">
+      <nav class="th-side">${FOCUS.map(f => `<a href="#focus/${f.id}" class="${arg === f.id ? 'on' : ''}"><span class="n">${secN(f)}</span>${f.icon} ${esc(f.title)}</a>`).join('')}<a href="#focus/open" class="${arg === 'open' ? 'on' : ''}"><span class="n">${FOCUS_OPEN.length}</span>✍️ Открытые вопросы</a></nav>
+      <article class="card">
+        <h1 style="font-size:28px;margin:0">⭐ Важное к экзамену</h1>
+        <p class="sub" style="margin-top:6px">Пункты, которые назвал лектор, — подробно, с примерами, кейсами семинаров и ловушками. Внизу — тренажёр открытых вопросов на 3 балла.</p>
+        <div class="prose">${FOCUS_INFO}</div>
+        <div class="card setup focus-build">
+          <h3 style="margin-top:0">🎯 Собрать тест только по важному</h3>
+          <div class="grp"><b>Разделы</b><div class="chips">${chip(focusPrefs.secs.size === FOCUS.length, 'Все пункты', 'data-fall')}${FOCUS.map(f => chip(focusPrefs.secs.has(f.id), `${f.icon} ${esc(f.title.split(':')[0])} · ${secN(f)}`, `data-fs="${f.id}"`)).join('')}</div></div>
+          <div class="grp"><b>Сколько вопросов</b><div class="chips">${[10, 20, 40, 9999].map(n => chip(focusPrefs.count === n, n === 9999 ? 'Все' : n, `data-fc="${n}"`)).join('')}</div></div>
+          <p class="small muted" style="margin:10px 0 0">В подборке ${pool.length} вопросов: A — ${lvN('A')}, B — ${lvN('B')}, C — ${lvN('C')}. Вопрос может относиться к нескольким пунктам.</p>
+          <div class="row" style="margin-top:14px">
+            <button class="btn big" id="fTrain" ${pool.length ? '' : 'disabled'}>▶ Тренировка (${Math.min(pool.length, focusPrefs.count)})</button>
+            <button class="btn pink big" id="fExam" ${pool.length ? '' : 'disabled'}>🎓 Пробный экзамен по важному · 40 вопросов</button>
+          </div>
+        </div>
+        ${FOCUS.map(f => `<section class="focus-sec" id="f-${f.id}">
+          <div class="row" style="gap:8px;align-items:center"><span class="t-ico">${f.icon}</span><div><span class="tag">${esc(f.from)}</span><h2 style="margin:4px 0 0">${esc(f.title)}</h2></div><span class="spacer"></span><button class="btn sm" data-ft="${f.id}">🎯 Тест по разделу (${secN(f)})</button></div>
+          <div class="prose">${f.html}</div></section>`).join('')}
+        <section class="focus-sec" id="f-open">
+          <div class="row" style="gap:8px;align-items:center"><span class="t-ico">✍️</span><div><span class="tag">3 балла · 2 вопроса на экзамене</span><h2 style="margin:4px 0 0">Открытые вопросы — тренажёр</h2></div></div>
+          <p class="small muted">Напиши ответ, потом открой эталон и честно отметь, какие критерии выполнены. Схема ответа: понятие и автор → определение → применение к ситуации → конкретное решение.</p>
+          ${FOCUS_OPEN.map((o, n) => { const { st, k, pts } = focusOpenScore(o); return `<div class="card open-q" data-oq="${o.id}">
+            <div class="row" style="gap:6px"><span class="tag lvC">Открытый · 3 балла</span><span class="tag">${FOCUS.find(f => f.id === o.sec).icon} ${esc(FOCUS.find(f => f.id === o.sec).title.split(':')[0])}</span>${st.shown ? `<span class="tag" style="border-color:var(--ok)">самооценка ${pts} / 3</span>` : ''}</div>
+            <p class="qtext" style="margin:8px 0">${n + 1}. ${esc(o.q)}</p>
+            <textarea class="open-ta" rows="5" placeholder="Твой ответ…">${esc(st.t || '')}</textarea>
+            ${st.shown ? `<div class="feedback ok" style="margin-top:10px"><h3>📌 Эталонный ответ</h3><div>${esc(o.model)}</div>
+              <h3 style="margin-top:12px">✅ Критерии — отметь, что есть в твоём ответе</h3>
+              ${o.crit.map((c, i) => `<label class="open-crit"><input type="checkbox" data-ci="${i}" ${(st.c || [])[i] ? 'checked' : ''}> ${esc(c)}</label>`).join('')}
+              <div class="small" style="margin-top:8px"><b>${k} из ${o.crit.length}</b> критериев → примерно <b>${pts} из 3</b> баллов</div></div>`
+            : `<div class="row" style="margin-top:10px"><button class="btn ghost sm" data-show>📌 Показать эталон и критерии</button></div>`}
+          </div>`; }).join('')}
+        </section>
+      </article>
+    </div>`;
+    $$('[data-fs]', main).forEach(el => el.onclick = () => { const id = el.dataset.fs; if (focusPrefs.secs.size === FOCUS.length) focusPrefs.secs = new Set([id]); else focusPrefs.secs.has(id) ? focusPrefs.secs.delete(id) : focusPrefs.secs.add(id); if (!focusPrefs.secs.size) focusPrefs.secs = new Set(FOCUS.map(f => f.id)); redraw(); });
+    $('[data-fall]', main).onclick = () => { focusPrefs.secs = new Set(FOCUS.map(f => f.id)); redraw(); };
+    $$('[data-fc]', main).forEach(el => el.onclick = () => { focusPrefs.count = +el.dataset.fc; redraw(); });
+    const train = list => runSession(main, pickQuestions(list, 'smart', focusPrefs.count), { title: 'Важное', again: () => go('#focus') });
+    $('#fTrain').onclick = () => train(pool);
+    $$('[data-ft]', main).forEach(el => el.onclick = () => train(Q.filter(q => FOCUS_OF.get(q.id).includes(el.dataset.ft))));
+    $('#fExam').onclick = () => { const secs = new Set(focusPrefs.secs), E = examState(); E.run = buildMock(q => inFocus(q, secs)); E.run.focus = true; E.review = false; save(); go('#exam'); };
+    $$('.open-q', main).forEach(card => {
+      const o = FOCUS_OPEN.find(x => x.id === card.dataset.oq), st = () => S.open[o.id] = S.open[o.id] || {};
+      $('.open-ta', card).addEventListener('input', e => { st().t = e.target.value; save(); });
+      const sh = $('[data-show]', card); if (sh) sh.onclick = () => { st().shown = 1; save(); redraw(); };
+      $$('[data-ci]', card).forEach(cb => cb.onchange = () => { const s = st(); s.c = s.c || []; s.c[+cb.dataset.ci] = cb.checked ? 1 : 0; save(); redraw(); });
+    });
+    keyHandler = null;
+  };
+  // перерисовка без прыжка страницы
+  const redraw = () => { const y = scrollY; draw(); window.scrollTo(0, y); };
+  draw();
+  const target = arg && $(`#f-${arg}`, main);
+  if (target) requestAnimationFrame(() => target.scrollIntoView({ block: 'start' }));
+}
+
 function examState() { return S.exam || (S.exam = { run: null, hist: [], last: null }); }
-function buildMock() {
+function buildMock(pred = () => true) {
   const pickLv = (lv, n) => {
-    const pool = shuffle(Q.filter(q => q.lv === lv)), out = [], cnt = {}, cap = t => t === 'lit' ? 1 : Math.ceil(n / 8) + 1;
+    const pool = shuffle(Q.filter(q => q.lv === lv && pred(q))), out = [], cnt = {}, cap = t => t === 'lit' ? 1 : Math.ceil(n / 8) + 1;
     for (const t of TOPICS.map(x => x.id).filter(t => t !== 'lit')) { const q = pool.find(x => x.t === t); if (q && out.length < n) { out.push(q); cnt[t] = 1; } }
     for (const q of pool) { if (out.length >= n) break; if (out.includes(q) || (cnt[q.t] || 0) >= cap(q.t)) continue; cnt[q.t] = (cnt[q.t] || 0) + 1; out.push(q); }
     for (const q of pool) { if (out.length >= n) break; if (!out.includes(q)) out.push(q); }
+    for (const q of shuffle(Q.filter(x => x.lv === lv))) { if (out.length >= n) break; if (!out.includes(q)) out.push(q); } // если важных вопросов уровня не хватает
     return shuffle(out);
   };
   const qs = [...pickLv('A', 20), ...pickLv('B', 16), ...pickLv('C', 4)];
@@ -1008,7 +1087,7 @@ function finishExam() {
   const E = examState(), run = E.run; if (!run) return;
   let raw = 0, ok = 0; const byT = {};
   run.ids.forEach(id => { const q = QBY(id); if (!q) return; const a = run.ans[id], r = isRight(q, a); if (r) { raw += PTS[q.lv]; ok++; } const t = byT[q.t] = byT[q.t] || { ok: 0, n: 0 }; t.n++; if (r) t.ok++; if (a && a.length) record(q, r); });
-  E.hist.push({ at: run.at, raw, ok, grade: gradeOf(raw) });
+  E.hist.push({ at: run.at, raw, ok, grade: gradeOf(raw), focus: run.focus ? 1 : 0 });
   E.last = { ids: run.ids, ord: run.ord, ans: run.ans, raw, ok, byT, i: 0 };
   E.run = null; E.review = true; clearInterval(exTimer); exTimer = 0; save(); go('#exam'); window.scrollTo(0, 0);
 }
@@ -1036,7 +1115,7 @@ function viewExam(main) {
         <li>Сначала пройди лёгкие вопросы, сложные отметь «вернуться позже»; на C-кейсы оставь 15 минут.</li>
         <li>Экзамен — 40% итоговой оценки и блокирующий: уровень A — по слайдам и основной литературе.</li></ul></div>
     </div>
-    ${E.hist.length ? `<div class="card" style="margin-top:16px"><h3>История попыток</h3><table class="tbl">${E.hist.slice().reverse().map(h => `<tr><td>${new Date(h.at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td><td><b>${h.raw} / 64</b></td><td>${h.ok} / 40 верных</td><td>оценка ${h.grade}</td></tr>`).join('')}</table>${E.last ? '<button class="btn ghost sm" id="exLast" style="margin-top:10px">🔍 Разбор последней попытки</button>' : ''}</div>` : ''}`;
+    ${E.hist.length ? `<div class="card" style="margin-top:16px"><h3>История попыток</h3><table class="tbl">${E.hist.slice().reverse().map(h => `<tr><td>${new Date(h.at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td><td><b>${h.raw} / 64</b></td><td>${h.ok} / 40 верных</td><td>оценка ${h.grade}${h.focus ? ' · ⭐ по важному' : ''}</td></tr>`).join('')}</table>${E.last ? '<button class="btn ghost sm" id="exLast" style="margin-top:10px">🔍 Разбор последней попытки</button>' : ''}</div>` : ''}`;
   $('#exStart').onclick = () => { E.run = buildMock(); E.review = false; save(); viewExam(main); };
   const l = $('#exLast'); if (l) l.onclick = () => { E.review = true; E.last.i = 0; viewExam(main); };
   keyHandler = e => { if (e.key === 'Enter') $('#exStart').click(); };
@@ -1045,7 +1124,7 @@ function examRun(main, E) {
   const run = E.run, i = Math.min(run.i, run.ids.length - 1), id = run.ids[i], q = QBY(id), multi = !!q.m, a = run.ans[id] || [];
   const answered = run.ids.filter(x => (run.ans[x] || []).length).length;
   main.innerHTML = `<div class="quiz-wrap">
-    <div class="row" style="justify-content:space-between;margin-bottom:10px"><span class="ex-timer" id="exTime">80:00</span><span class="small muted">отвечено ${answered} / ${run.ids.length}</span></div>
+    <div class="row" style="justify-content:space-between;margin-bottom:10px"><span class="ex-timer" id="exTime">80:00</span>${run.focus ? '<span class="tag">⭐ по важному</span>' : ''}<span class="small muted">отвечено ${answered} / ${run.ids.length}</span></div>
     <div class="card ex-grid">${run.ids.map((x, k) => `<button class="${(run.ans[x] || []).length ? 'ans' : ''} ${k === i ? 'cur' : ''} ${run.flags[x] ? 'flag' : ''}" data-k="${k}">${k + 1}</button>`).join('')}</div>
     <div class="card qcard">
       <div class="row" style="justify-content:space-between"><span class="small muted">Вопрос ${i + 1} · уровень ${q.lv} · ${PTS[q.lv]} ${plural(PTS[q.lv], 'балл', 'балла', 'баллов')}</span><label class="small" style="cursor:pointer"><input type="checkbox" id="exFlag" ${run.flags[id] ? 'checked' : ''}> вернуться позже</label></div>

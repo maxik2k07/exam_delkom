@@ -7,7 +7,7 @@ const root = flat ? here : path.join(here, '..');
 const find = f => [path.join(root, 'src', f), path.join(root, 'vendor', f), path.join(here, f)].find(p => fs.existsSync(p));
 const rd = f => { const p = find(f); if (!p) throw new Error('нет файла ' + f); return fs.readFileSync(p, 'utf8'); };
 
-const DATA = ['data_topics.js', 'theory_1.js', 'theory_2.js', 'theory_3.js', 'theory_4.js', 'theory_5.js', 'data_traps_cards.js', 'q_tests_2026.js', 'q_l1_l2.js', 'q_l3_l4.js', 'q_l5_l6.js', 'q_l7_l8.js', 'q_sem.js'];
+const DATA = ['data_topics.js', 'theory_1.js', 'theory_2.js', 'theory_3.js', 'theory_4.js', 'theory_5.js', 'data_focus.js', 'data_traps_cards.js', 'q_tests_2026.js', 'q_l1_l2.js', 'q_l3_l4.js', 'q_l5_l6.js', 'q_l7_l8.js', 'q_sem.js', 'q_focus.js'];
 const GAME = ['game_core.js', 'game_world.js', 'game_items.js', 'game_tex.js', 'game_render.js', 'game_skin.js', 'game_entities.js', 'game_ui.js', 'game_main.js'];
 const OTHER = ['template.html', 'styles.css', 'app.js', 'three.min.js'];
 
